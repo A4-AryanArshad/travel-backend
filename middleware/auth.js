@@ -6,8 +6,18 @@ const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 // Middleware to verify JWT token
 const authenticateToken = async (req, res, next) => {
   try {
+    let token = null;
+    
+    // Check for token in Authorization header (Bearer token)
     const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
+    if (authHeader && authHeader.split(' ')[1]) {
+      token = authHeader.split(' ')[1];
+    }
+    
+    // Check for token in cookies (for production)
+    if (!token && process.env.NODE_ENV === 'production') {
+      token = req.cookies?.authToken;
+    }
 
     if (!token) {
       return res.status(401).json({

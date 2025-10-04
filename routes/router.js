@@ -3,6 +3,7 @@ const router = express.Router();
 const { 
   signup, 
   login, 
+  logout,
   getProfile,
   uploadImage,
   createBlog,
@@ -47,6 +48,7 @@ const { authenticateToken, requireAdmin } = require('../middleware/auth');
 // Public routes
 router.post('/auth/signup', signup);
 router.post('/auth/login', login);
+router.post('/auth/logout', logout);
 
 // Protected routes
 router.get('/auth/profile', authenticateToken, getProfile);

@@ -111,6 +111,17 @@ const signup = async (req, res) => {
       { expiresIn: '7d' }
     );
 
+    // Set HTTP-only cookie for production
+    if (process.env.NODE_ENV === 'production') {
+      res.cookie('authToken', token, {
+        httpOnly: true,
+        secure: true,
+        sameSite: 'none',
+        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+        domain: process.env.NODE_ENV === 'production' ? '.vercel.app' : undefined
+      });
+    }
+
     res.status(201).json({
       success: true,
       message: 'User created successfully',
@@ -177,6 +188,17 @@ const login = async (req, res) => {
       { expiresIn: '7d' }
     );
 
+    // Set HTTP-only cookie for production
+    if (process.env.NODE_ENV === 'production') {
+      res.cookie('authToken', token, {
+        httpOnly: true,
+        secure: true,
+        sameSite: 'none',
+        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+        domain: process.env.NODE_ENV === 'production' ? '.vercel.app' : undefined
+      });
+    }
+
     res.status(200).json({
       success: true,
       message: 'Login successful',
@@ -193,6 +215,33 @@ const login = async (req, res) => {
 
   } catch (error) {
     console.error('Login error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+};
+
+// Logout controller
+const logout = async (req, res) => {
+  try {
+    // Clear the HTTP-only cookie
+    if (process.env.NODE_ENV === 'production') {
+      res.clearCookie('authToken', {
+        httpOnly: true,
+        secure: true,
+        sameSite: 'none',
+        domain: process.env.NODE_ENV === 'production' ? '.vercel.app' : undefined
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Logout successful'
+    });
+  } catch (error) {
+    console.error('Logout error:', error);
     res.status(500).json({
       success: false,
       message: 'Internal server error',
@@ -1433,9 +1482,10 @@ const getGalleryStats = async (req, res) => {
   }
 };
 
-module.exports = { 
-  signup, 
-  login, 
+module.exports = {
+  signup,
+  login,
+  logout,
   getProfile,
   uploadImage,
   createBlog,
