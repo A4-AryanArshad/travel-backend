@@ -7,10 +7,10 @@ const cookieParser = require('cookie-parser');
 const db = require('../config/db')
 
 const corsOptions = {
-  origin: ['https://travel-five-alpha-80.vercel.app'], // Replace with your allowed origin
+  origin: ['https://travel-five-alpha-80.vercel.app'], // Frontend deployed URL
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  allowedhallowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true // Allowed methods
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true
 };
 
 app.use(cookieParser());
