@@ -7,6 +7,7 @@ const jwt = require('jsonwebtoken');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const sharp = require('sharp');
 const User = require('../schemas/userSchema');
 const Blog = require('../schemas/blogSchema');
 const Tour = require('../schemas/tourSchema');
@@ -26,6 +27,42 @@ cloudinary.config({
 
 // JWT Secret (in production, use environment variable)
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
+
+// Image compression function
+const compressImage = async (inputBuffer, options = {}) => {
+  const {
+    maxWidth = 1200,
+    maxHeight = 1200,
+    quality = 80,
+    format = 'jpeg'
+  } = options;
+
+  try {
+    const originalSize = inputBuffer.length;
+    
+    const compressedBuffer = await sharp(inputBuffer)
+      .resize(maxWidth, maxHeight, {
+        fit: 'inside',
+        withoutEnlargement: true
+      })
+      .jpeg({ quality })
+      .toBuffer();
+
+    const compressedSize = compressedBuffer.length;
+    const savings = ((originalSize - compressedSize) / originalSize * 100).toFixed(1);
+    
+    console.log(`📸 Image Compression Results:`);
+    console.log(`   Original: ${(originalSize / 1024 / 1024).toFixed(2)}MB`);
+    console.log(`   Compressed: ${(compressedSize / 1024 / 1024).toFixed(2)}MB`);
+    console.log(`   Savings: ${savings}% (${((originalSize - compressedSize) / 1024 / 1024).toFixed(2)}MB saved)`);
+    console.log(`   Quality: ${quality}%, Max Size: ${maxWidth}x${maxHeight}px`);
+
+    return compressedBuffer;
+  } catch (error) {
+    console.error('Image compression error:', error);
+    throw new Error('Failed to compress image');
+  }
+};
 
 // Multer configuration for image uploads
 const storage = multer.diskStorage({
@@ -296,29 +333,65 @@ const uploadImage = async (req, res) => {
         message: 'No image file provided'
       });
     }
-    // Prefer Cloudinary upload. Supports:
-    // - multipart file via multer (req.file.path)
-    // - base64 data in req.body.image
+
+    console.log('🔄 Processing image upload...');
     let result;
     if (req.file) {
-      // Upload from local path that multer saved
-      const localPath = req.file.path;
-      result = await cloudinary.uploader.upload(localPath, {
-        folder: 'travel/tours',
-        resource_type: 'image'
+      console.log(`📁 File upload: ${req.file.originalname}`);
+      // Read the uploaded file
+      const inputBuffer = fs.readFileSync(req.file.path);
+      
+      // Compress the image
+      const compressedBuffer = await compressImage(inputBuffer, {
+        maxWidth: 1200,
+        maxHeight: 1200,
+        quality: 80
       });
+
+      // Upload compressed image to Cloudinary
+      result = await cloudinary.uploader.upload(
+        `data:image/jpeg;base64,${compressedBuffer.toString('base64')}`,
+        {
+          folder: 'travel/images',
+          resource_type: 'image',
+          quality: 'auto',
+          fetch_format: 'auto'
+        }
+      );
+
       // Remove local file after upload
-      try { fs.unlinkSync(localPath); } catch {}
+      try { fs.unlinkSync(req.file.path); } catch {}
     } else if (req.body.image) {
-      result = await cloudinary.uploader.upload(req.body.image, {
-        folder: 'travel/tours',
-        resource_type: 'image'
+      console.log('📄 Base64 data upload');
+      // Handle base64 data
+      const base64Data = req.body.image.replace(/^data:image\/[a-z]+;base64,/, '');
+      const inputBuffer = Buffer.from(base64Data, 'base64');
+      
+      // Compress the image
+      const compressedBuffer = await compressImage(inputBuffer, {
+        maxWidth: 1200,
+        maxHeight: 1200,
+        quality: 80
       });
+
+      // Upload compressed image to Cloudinary
+      result = await cloudinary.uploader.upload(
+        `data:image/jpeg;base64,${compressedBuffer.toString('base64')}`,
+        {
+          folder: 'travel/images',
+          resource_type: 'image',
+          quality: 'auto',
+          fetch_format: 'auto'
+        }
+      );
     }
 
+    console.log('✅ Image upload completed successfully');
+    console.log(`🔗 Cloudinary URL: ${result.secure_url}`);
+    
     res.status(200).json({
       success: true,
-      message: 'Image uploaded successfully',
+      message: 'Image uploaded and compressed successfully',
       data: {
         imageUrl: result.secure_url,
         publicId: result.public_id,
@@ -881,16 +954,33 @@ const createGallery = async (req, res) => {
     // Handle multiple images upload
     let imageUrls = [];
     if (images && Array.isArray(images) && images.length > 0) {
-      for (const img of images) {
+      console.log(`🔄 Processing ${images.length} gallery images...`);
+      for (let i = 0; i < images.length; i++) {
         try {
+          const img = images[i];
           const isDataUrl = typeof img === 'string' && img.startsWith('data:');
           const isHttp = typeof img === 'string' && /^https?:\/\//.test(img);
           
           if (isDataUrl) {
-            const uploadRes = await cloudinary.uploader.upload(img, {
-              folder: 'travel/gallery',
-              resource_type: 'image'
+            console.log(`📸 Compressing gallery image ${i + 1}/${images.length}...`);
+            // Compress image before upload
+            const base64Data = img.replace(/^data:image\/[a-z]+;base64,/, '');
+            const inputBuffer = Buffer.from(base64Data, 'base64');
+            const compressedBuffer = await compressImage(inputBuffer, {
+              maxWidth: 1200,
+              maxHeight: 1200,
+              quality: 80
             });
+
+            const uploadRes = await cloudinary.uploader.upload(
+              `data:image/jpeg;base64,${compressedBuffer.toString('base64')}`,
+              {
+                folder: 'travel/gallery',
+                resource_type: 'image',
+                quality: 'auto',
+                fetch_format: 'auto'
+              }
+            );
             imageUrls.push(uploadRes.secure_url);
           } else if (isHttp) {
             imageUrls.push(img);
@@ -908,10 +998,25 @@ const createGallery = async (req, res) => {
         const isDataUrl = typeof imageUrl === 'string' && imageUrl.startsWith('data:');
         const isHttp = typeof imageUrl === 'string' && /^https?:\/\//.test(imageUrl);
         if (isDataUrl) {
-          const uploadRes = await cloudinary.uploader.upload(imageUrl, {
-            folder: 'travel/gallery',
-            resource_type: 'image'
+          console.log('📸 Compressing main gallery image...');
+          // Compress image before upload
+          const base64Data = imageUrl.replace(/^data:image\/[a-z]+;base64,/, '');
+          const inputBuffer = Buffer.from(base64Data, 'base64');
+          const compressedBuffer = await compressImage(inputBuffer, {
+            maxWidth: 1200,
+            maxHeight: 1200,
+            quality: 80
           });
+
+          const uploadRes = await cloudinary.uploader.upload(
+            `data:image/jpeg;base64,${compressedBuffer.toString('base64')}`,
+            {
+              folder: 'travel/gallery',
+              resource_type: 'image',
+              quality: 'auto',
+              fetch_format: 'auto'
+            }
+          );
           singleImageUrl = uploadRes.secure_url;
         } else if (isHttp) {
           singleImageUrl = imageUrl;
@@ -1523,16 +1628,33 @@ const createTour = async (req, res) => {
     // Handle multiple images
     let imageUrls = [];
     if (body.images && Array.isArray(body.images) && body.images.length > 0) {
-      for (const img of body.images) {
+      console.log(`🔄 Processing ${body.images.length} tour images...`);
+      for (let i = 0; i < body.images.length; i++) {
         try {
+          const img = body.images[i];
           const isDataUrl = typeof img === 'string' && img.startsWith('data:');
           const isHttp = typeof img === 'string' && /^https?:\/\//.test(img);
           
           if (isDataUrl) {
-            const uploadRes = await cloudinary.uploader.upload(img, {
-              folder: 'travel/tours',
-              resource_type: 'image'
+            console.log(`📸 Compressing tour image ${i + 1}/${body.images.length}...`);
+            // Compress image before upload
+            const base64Data = img.replace(/^data:image\/[a-z]+;base64,/, '');
+            const inputBuffer = Buffer.from(base64Data, 'base64');
+            const compressedBuffer = await compressImage(inputBuffer, {
+              maxWidth: 1200,
+              maxHeight: 1200,
+              quality: 80
             });
+
+            const uploadRes = await cloudinary.uploader.upload(
+              `data:image/jpeg;base64,${compressedBuffer.toString('base64')}`,
+              {
+                folder: 'travel/tours',
+                resource_type: 'image',
+                quality: 'auto',
+                fetch_format: 'auto'
+              }
+            );
             imageUrls.push(uploadRes.secure_url);
           } else if (isHttp) {
             imageUrls.push(img);
@@ -1550,10 +1672,25 @@ const createTour = async (req, res) => {
         const isDataUrl = typeof body.image === 'string' && body.image.startsWith('data:');
         const isHttp = typeof body.image === 'string' && /^https?:\/\//.test(body.image);
         if (isDataUrl) {
-          const uploadRes = await cloudinary.uploader.upload(body.image, {
-            folder: 'travel/tours',
-            resource_type: 'image'
+          console.log('📸 Compressing main tour image...');
+          // Compress image before upload
+          const base64Data = body.image.replace(/^data:image\/[a-z]+;base64,/, '');
+          const inputBuffer = Buffer.from(base64Data, 'base64');
+          const compressedBuffer = await compressImage(inputBuffer, {
+            maxWidth: 1200,
+            maxHeight: 1200,
+            quality: 80
           });
+
+          const uploadRes = await cloudinary.uploader.upload(
+            `data:image/jpeg;base64,${compressedBuffer.toString('base64')}`,
+            {
+              folder: 'travel/tours',
+              resource_type: 'image',
+              quality: 'auto',
+              fetch_format: 'auto'
+            }
+          );
           singleImageUrl = uploadRes.secure_url;
         } else if (isHttp) {
           singleImageUrl = body.image;
