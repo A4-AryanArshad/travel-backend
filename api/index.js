@@ -23,10 +23,10 @@ app.use('/uploads', express.static('uploads'));
 app.use('/', router)
 
 // For Vercel serverless functions
-if (process.env.NODE_ENV === 'production') {
+
   // Initialize database connection for serverless
-  db().catch(err => console.error('Database connection failed:', err));
-} else {
+
+
   // For local development
   db().then(() => {
     app.listen(3001, () => {
@@ -35,6 +35,6 @@ if (process.env.NODE_ENV === 'production') {
   }).catch(err => {
     console.error('Failed to start server:', err);
   });
-}
+
 
 module.exports = app
