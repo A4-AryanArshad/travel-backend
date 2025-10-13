@@ -16,6 +16,7 @@ const Booking = require('../schemas/bookingSchema');
 const Review = require('../schemas/reviewSchema');
 const cloudinary = require('cloudinary').v2;
 const stripe = require('stripe')('sk_test_51Rj1dnBOoulucdCvbGDz4brJYHztkuL80jGSKcnQNT46g9P58pbxY36Lg3yWyMDb6Gwgv5Rr3NDfjvB2HyaDlJP7006wnXEtp1');
+const nodemailer = require('nodemailer');
 
 // Cloudinary configuration (hardcoded as requested)
 cloudinary.config({
@@ -64,20 +65,8 @@ const compressImage = async (inputBuffer, options = {}) => {
   }
 };
 
-// Multer configuration for image uploads
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    const uploadPath = path.join(__dirname, '../uploads/images');
-    if (!fs.existsSync(uploadPath)) {
-      fs.mkdirSync(uploadPath, { recursive: true });
-    }
-    cb(null, uploadPath);
-  },
-  filename: function (req, file, cb) {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, 'blog-' + uniqueSuffix + path.extname(file.originalname));
-  }
-});
+// Multer configuration for image uploads (using memory storage)
+const storage = multer.memoryStorage();
 
 const fileFilter = (req, file, cb) => {
   if (file.mimetype.startsWith('image/')) {
@@ -324,6 +313,54 @@ const getProfile = async (req, res) => {
 
 // Blog CRUD Controllers
 
+// Compress image and return to frontend
+const compressImageEndpoint = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: 'No image file provided'
+      });
+    }
+
+    console.log('🔄 Compressing image...');
+    console.log(`📁 File: ${req.file.originalname}`);
+    console.log(`📏 Original size: ${(req.file.size / 1024 / 1024).toFixed(2)}MB`);
+
+    // Compress the image from memory buffer
+    const compressedBuffer = await compressImage(req.file.buffer, {
+      maxWidth: 1200,
+      maxHeight: 1200,
+      quality: 80
+    });
+
+    console.log(`✅ Compression complete`);
+    console.log(`📏 Compressed size: ${(compressedBuffer.length / 1024 / 1024).toFixed(2)}MB`);
+
+    // Send compressed image back to frontend as base64
+    const base64Image = compressedBuffer.toString('base64');
+    
+    res.status(200).json({
+      success: true,
+      message: 'Image compressed successfully',
+      data: {
+        compressedImage: `data:image/jpeg;base64,${base64Image}`,
+        originalSize: req.file.size,
+        compressedSize: compressedBuffer.length,
+        savings: ((req.file.size - compressedBuffer.length) / req.file.size * 100).toFixed(1)
+      }
+    });
+
+  } catch (error) {
+    console.error('Compress image error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+};
+
 // Upload image
 const uploadImage = async (req, res) => {
   try {
@@ -338,8 +375,8 @@ const uploadImage = async (req, res) => {
     let result;
     if (req.file) {
       console.log(`📁 File upload: ${req.file.originalname}`);
-      // Read the uploaded file
-      const inputBuffer = fs.readFileSync(req.file.path);
+      // Use memory buffer instead of file path
+      const inputBuffer = req.file.buffer;
       
       // Compress the image
       const compressedBuffer = await compressImage(inputBuffer, {
@@ -358,9 +395,6 @@ const uploadImage = async (req, res) => {
           fetch_format: 'auto'
         }
       );
-
-      // Remove local file after upload
-      try { fs.unlinkSync(req.file.path); } catch {}
     } else if (req.body.image) {
       console.log('📄 Base64 data upload');
       // Handle base64 data
@@ -1593,6 +1627,7 @@ module.exports = {
   logout,
   getProfile,
   uploadImage,
+  compressImageEndpoint,
   createBlog,
   getBlogs,
   getBlog,
@@ -1613,6 +1648,58 @@ module.exports = {
   safeUploadSingle,
   // Tours exports added below after definitions
 };
+
+// ==================== CONTACT EMAIL ====================
+
+const transport = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.EMAIL_USER || 'ahmadmurtaza2233@gmail.com',
+    pass: process.env.EMAIL_PASS || 'czhupnxmdckqhydy',
+  },
+});
+
+const sendContactEmail = async (req, res) => {
+  try {
+    const { name, email, phone, country, heardFrom, message } = req.body || {};
+    console.log(req.body)
+
+    if (!name || !email) {
+      return res.status(400).json({ success: false, message: 'Name and email are required' });
+    }
+
+    const html = `
+      <div style="font-family: Inter, Arial, sans-serif;">
+        <h2 style="margin:0 0 10px;">New Contact Submission</h2>
+        <p><strong>Name:</strong> ${name}</p>
+        <p><strong>Email:</strong> ${email}</p>
+        ${phone ? `<p><strong>Phone:</strong> ${phone}</p>` : ''}
+        ${country ? `<p><strong>Country:</strong> ${country}</p>` : ''}
+        ${heardFrom ? `<p><strong>Heard From:</strong> ${heardFrom}</p>` : ''}
+        ${message ? `<p><strong>Message:</strong><br/>${(message + '').replace(/\n/g,'<br/>')}</p>` : ''}
+        <hr/>
+        <p style="font-size:12px;color:#666">Travel Beyond Tours contact form</p>
+      </div>
+    `;
+
+    const mailOptions = {
+      from: `Travel Beyond Tours <${process.env.EMAIL_USER || 'ahmadmurtaza2233@gmail.com'}>`,
+      to: process.env.EMAIL_TO || process.env.EMAIL_USER || email,
+      subject: `New Contact Form Submission - ${name}`,
+      replyTo: email,
+      html,
+    };
+
+    await transport.sendMail(mailOptions);
+
+    return res.status(200).json({ success: true, message: 'Message sent successfully' });
+  } catch (error) {
+    console.error('Send contact email error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to send message', error: error.message });
+  }
+};
+
+module.exports.sendContactEmail = sendContactEmail;
 
 // Tours/Packages Controllers
 

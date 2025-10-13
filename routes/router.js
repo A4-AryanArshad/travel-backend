@@ -6,6 +6,7 @@ const {
   logout,
   getProfile,
   uploadImage,
+  compressImageEndpoint,
   createBlog,
   getBlogs,
   getBlog,
@@ -41,7 +42,8 @@ const {
   canUserReview,
   updateReview,
   deleteReview,
-  getGalleryStats
+  getGalleryStats,
+  sendContactEmail
 } = require('../controllers/controller');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 
@@ -59,7 +61,10 @@ router.get('/blogs/categories', getBlogCategories);
 router.get('/blogs/:id', getBlog);
 
 // Image upload route (admin only)
-router.post('/upload/image', authenticateToken, requireAdmin, require('../controllers/controller').safeUploadSingle('image'), uploadImage);
+router.post('/upload/image', authenticateToken, requireAdmin, uploadImage);
+
+// Image compression route (admin only) - compress and return to frontend
+router.post('/upload/compress', authenticateToken, requireAdmin, upload.single('image'), compressImageEndpoint);
 
 // Blog management routes (admin only)
 router.post('/blogs', authenticateToken, requireAdmin, createBlog);
@@ -119,5 +124,8 @@ router.get('/reviews/tour/:tourId', getTourReviews);
 router.get('/reviews/can-review/:tourId', authenticateToken, canUserReview);
 router.put('/reviews/:id', authenticateToken, updateReview);
 router.delete('/reviews/:id', authenticateToken, deleteReview);
+
+// Contact route (public)
+router.post('/contact', sendContactEmail);
 
 module.exports = router;

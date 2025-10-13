@@ -12,6 +12,8 @@ const db = async () => {
         if (!MONGODB_URI) {
             throw new Error('MONGODB_URI is not set in environment variables');
         }
+        mongoose.set('bufferTimeoutMS', 30000);  // wait up to 30s for connection
+        mongoose.set('bufferCommands', false);
         await mongoose.connect(MONGODB_URI).then(() => {
             console.log('---Database Connected Successfully---');
         })
