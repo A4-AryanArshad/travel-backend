@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 
 // Connection caching for Vercel serverless functions
-const MONGODB_URI = 'mongodb+srv://aryan:2021cs613@cluster0.xkuanbt.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0';
+const MONGODB_URI = process.env.MONGODB_URI;
 
 
 

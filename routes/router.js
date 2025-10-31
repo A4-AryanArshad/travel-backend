@@ -7,6 +7,7 @@ const {
   getProfile,
   uploadImage,
   compressImageEndpoint,
+  compressAndUploadToS3,
   createBlog,
   getBlogs,
   getBlog,
@@ -65,6 +66,9 @@ router.post('/upload/image', authenticateToken, requireAdmin, uploadImage);
 
 // Image compression route (admin only) - compress and return to frontend
 router.post('/upload/compress', authenticateToken, requireAdmin, upload.single('image'), compressImageEndpoint);
+
+// Image compress + upload to AWS S3 (admin only)
+router.post('/upload/s3', authenticateToken, requireAdmin, upload.single('image'), compressAndUploadToS3);
 
 // Blog management routes (admin only)
 router.post('/blogs', authenticateToken, requireAdmin, createBlog);

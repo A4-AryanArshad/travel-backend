@@ -15,6 +15,7 @@ const Gallery = require('../schemas/gallerySchema');
 const Booking = require('../schemas/bookingSchema');
 const Review = require('../schemas/reviewSchema');
 const cloudinary = require('cloudinary').v2;
+const AWS = require('aws-sdk');
 const stripe = require('stripe')('sk_test_51Rj1dnBOoulucdCvbGDz4brJYHztkuL80jGSKcnQNT46g9P58pbxY36Lg3yWyMDb6Gwgv5Rr3NDfjvB2HyaDlJP7006wnXEtp1');
 const nodemailer = require('nodemailer');
 
@@ -24,6 +25,13 @@ cloudinary.config({
   api_key: '419724397335875',
   api_secret: 'Q7usOM7s5EsyeubXFzy5fQ1I_7A',
   secure: true
+});
+
+// AWS S3 configuration (expects credentials via environment variables)
+const s3 = new AWS.S3({
+  accessKeyId: process.env.AKIA3ISBVURJQYYF434J,
+  secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  region: 'eu-north-1'
 });
 
 // JWT Secret (in production, use environment variable)
@@ -40,7 +48,7 @@ const compressImage = async (inputBuffer, options = {}) => {
 
   try {
     const originalSize = inputBuffer.length;
-    
+
     const compressedBuffer = await sharp(inputBuffer)
       .resize(maxWidth, maxHeight, {
         fit: 'inside',
@@ -51,7 +59,7 @@ const compressImage = async (inputBuffer, options = {}) => {
 
     const compressedSize = compressedBuffer.length;
     const savings = ((originalSize - compressedSize) / originalSize * 100).toFixed(1);
-    
+
     console.log(`📸 Image Compression Results:`);
     console.log(`   Original: ${(originalSize / 1024 / 1024).toFixed(2)}MB`);
     console.log(`   Compressed: ${(compressedSize / 1024 / 1024).toFixed(2)}MB`);
@@ -76,7 +84,7 @@ const fileFilter = (req, file, cb) => {
   }
 };
 
-const upload = multer({ 
+const upload = multer({
   storage: storage,
   fileFilter: fileFilter,
   limits: {
@@ -87,7 +95,7 @@ const upload = multer({
 // Multer error-safe wrapper
 const safeUploadSingle = (field) => (req, res, next) => {
   const handler = upload.single(field);
-  handler(req, res, function(err) {
+  handler(req, res, function (err) {
     if (err && err.code === 'LIMIT_FILE_SIZE') {
       return res.status(413).json({ success: false, message: 'Image too large. Max 25MB.' });
     }
@@ -128,10 +136,10 @@ const signup = async (req, res) => {
 
     // Generate JWT token
     const token = jwt.sign(
-      { 
-        userId: user._id, 
-        email: user.email, 
-        role: user.role 
+      {
+        userId: user._id,
+        email: user.email,
+        role: user.role
       },
       JWT_SECRET,
       { expiresIn: '7d' }
@@ -205,10 +213,10 @@ const login = async (req, res) => {
 
     // Generate JWT token
     const token = jwt.sign(
-      { 
-        userId: user._id, 
-        email: user.email, 
-        role: user.role 
+      {
+        userId: user._id,
+        email: user.email,
+        role: user.role
       },
       JWT_SECRET,
       { expiresIn: '7d' }
@@ -281,7 +289,7 @@ const getProfile = async (req, res) => {
   try {
     const userId = req.user.userId;
     const user = await User.findById(userId).select('-password');
-    
+
     if (!user) {
       return res.status(404).json({
         success: false,
@@ -339,7 +347,7 @@ const compressImageEndpoint = async (req, res) => {
 
     // Send compressed image back to frontend as base64
     const base64Image = compressedBuffer.toString('base64');
-    
+
     res.status(200).json({
       success: true,
       message: 'Image compressed successfully',
@@ -361,6 +369,43 @@ const compressImageEndpoint = async (req, res) => {
   }
 };
 
+// Compress image then upload directly to AWS S3
+const compressAndUploadToS3 = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: 'No image file provided' });
+    }
+
+    // Compress in-memory image buffer
+    const compressedBuffer = await compressImage(req.file.buffer, {
+      maxWidth: 1200,
+      maxHeight: 1200,
+      quality: 80
+    });
+
+    const key = `${Date.now()}-${req.file.originalname}`;
+
+    const params = {
+      Bucket: 'zenibucket',
+      Key: key,
+      Body: compressedBuffer,
+      ContentType: req.file.mimetype
+      // ACL: 'public-read', // Uncomment if your bucket requires it
+    };
+
+    s3.upload(params, (err, data) => {
+      if (err) {
+        console.log(err.message);
+        return res.status(500).json({ success: false, message: 'S3 upload failed', error: err.message });
+      }
+      return res.status(200).json({ success: true, url: data.Location, key });
+    });
+  } catch (error) {
+    console.error('compressAndUploadToS3 error:', error);
+    return res.status(500).json({ success: false, message: 'Internal server error', error: error.message });
+  }
+};
+
 // Upload image
 const uploadImage = async (req, res) => {
   try {
@@ -377,7 +422,7 @@ const uploadImage = async (req, res) => {
       console.log(`📁 File upload: ${req.file.originalname}`);
       // Use memory buffer instead of file path
       const inputBuffer = req.file.buffer;
-      
+
       // Compress the image
       const compressedBuffer = await compressImage(inputBuffer, {
         maxWidth: 1200,
@@ -400,7 +445,7 @@ const uploadImage = async (req, res) => {
       // Handle base64 data
       const base64Data = req.body.image.replace(/^data:image\/[a-z]+;base64,/, '');
       const inputBuffer = Buffer.from(base64Data, 'base64');
-      
+
       // Compress the image
       const compressedBuffer = await compressImage(inputBuffer, {
         maxWidth: 1200,
@@ -422,7 +467,7 @@ const uploadImage = async (req, res) => {
 
     console.log('✅ Image upload completed successfully');
     console.log(`🔗 Cloudinary URL: ${result.secure_url}`);
-    
+
     res.status(200).json({
       success: true,
       message: 'Image uploaded and compressed successfully',
@@ -445,13 +490,13 @@ const uploadImage = async (req, res) => {
 // Create blog
 const createBlog = async (req, res) => {
   try {
-    const { title, content, excerpt, author, category, tags, featuredImage, status, isFeatured, readTime } = req.body;
+    const { title, title_es, content, content_es, excerpt, excerpt_es, author, author_es, category, tags, tags_es, featuredImage, status, isFeatured, readTime, slug_es } = req.body;
 
     // Validation
-    if (!title || !content || !excerpt || !author || !category || !featuredImage) {
+    if (!title || !content || !content_es || !excerpt || !author || !category || !featuredImage) {
       return res.status(400).json({
         success: false,
-        message: 'Title, content, excerpt, author, category, and featured image are required'
+        message: 'Title, content (both languages), excerpt, author, category, and featured image are required'
       });
     }
 
@@ -459,6 +504,12 @@ const createBlog = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: 'Content must be at least 50 characters long'
+      });
+    }
+    if (content_es && content_es.length < 50) {
+      return res.status(400).json({
+        success: false,
+        message: 'Content (es) must be at least 50 characters long'
       });
     }
 
@@ -492,15 +543,21 @@ const createBlog = async (req, res) => {
 
     const blog = new Blog({
       title,
+      title_es,
       content,
+      content_es,
       excerpt,
+      excerpt_es,
       author,
+      author_es,
       category,
       tags: tags || [],
+      tags_es: tags_es || [],
       featuredImage,
       status: status || 'draft',
       isFeatured: isFeatured === 'true' || isFeatured === true,
       readTime: readTime || '5 min read',
+      slug_es,
       publishedAt
     });
 
@@ -514,7 +571,7 @@ const createBlog = async (req, res) => {
 
   } catch (error) {
     console.error('Create blog error:', error);
-    
+
     // Handle validation errors
     if (error.name === 'ValidationError') {
       const errors = Object.values(error.errors).map(err => err.message);
@@ -539,15 +596,15 @@ const getBlogs = async (req, res) => {
     const { status, category, search } = req.query;
 
     let query = {};
-    
+
     if (status) {
       query.status = status;
     }
-    
+
     if (category) {
       query.category = category;
     }
-    
+
     if (search) {
       query.$text = { $search: search };
     }
@@ -647,6 +704,12 @@ const updateBlog = async (req, res) => {
         message: 'Content must be at least 50 characters long'
       });
     }
+    if (updateData.content_es && updateData.content_es.length < 50) {
+      return res.status(400).json({
+        success: false,
+        message: 'Content (es) must be at least 50 characters long'
+      });
+    }
 
     // Validate excerpt length if provided
     if (updateData.excerpt && (updateData.excerpt.length < 20 || updateData.excerpt.length > 300)) {
@@ -692,7 +755,7 @@ const updateBlog = async (req, res) => {
 
   } catch (error) {
     console.error('Update blog error:', error);
-    
+
     // Handle validation errors
     if (error.name === 'ValidationError') {
       const errors = Object.values(error.errors).map(err => err.message);
@@ -743,7 +806,7 @@ const deleteBlog = async (req, res) => {
 const getBlogCategories = async (req, res) => {
   try {
     const categories = await Blog.distinct('category');
-    
+
     res.status(200).json({
       success: true,
       data: categories
@@ -768,14 +831,14 @@ const getUsers = async (req, res) => {
     const skip = (page - 1) * limit;
 
     let query = {};
-    
+
     if (search) {
       query.$or = [
         { username: { $regex: search, $options: 'i' } },
         { email: { $regex: search, $options: 'i' } }
       ];
     }
-    
+
     if (role) {
       query.role = role;
     }
@@ -893,7 +956,7 @@ const updateUser = async (req, res) => {
 
   } catch (error) {
     console.error('Update user error:', error);
-    
+
     // Handle validation errors
     if (error.name === 'ValidationError') {
       const errors = Object.values(error.errors).map(err => err.message);
@@ -955,7 +1018,7 @@ const createGallery = async (req, res) => {
   try {
     console.log('Create gallery request body:', req.body);
     const body = req.body || {};
-    const { title, description, imageUrl, images, category, tags, featured, status, uploadedBy, alt } = body;
+    const { title, title_es, description, description_es, imageUrl, images, category, tags, tags_es, featured, status, uploadedBy, uploadedBy_es, alt, alt_es } = body;
 
     // Validation
     const required = ['title', 'description', 'category', 'uploadedBy', 'alt'];
@@ -994,7 +1057,7 @@ const createGallery = async (req, res) => {
           const img = images[i];
           const isDataUrl = typeof img === 'string' && img.startsWith('data:');
           const isHttp = typeof img === 'string' && /^https?:\/\//.test(img);
-          
+
           if (isDataUrl) {
             console.log(`📸 Compressing gallery image ${i + 1}/${images.length}...`);
             // Compress image before upload
@@ -1075,15 +1138,20 @@ const createGallery = async (req, res) => {
 
     const gallery = new Gallery({
       title,
+      title_es,
       description,
+      description_es,
       imageUrl: singleImageUrl,
       images: imageUrls,
       category,
       tags: tags || [],
+      tags_es: tags_es || [],
       featured: featured === 'true' || featured === true,
       status: status || 'inactive',
       uploadedBy,
-      alt
+      uploadedBy_es,
+      alt,
+      alt_es
     });
 
     await gallery.save();
@@ -1101,7 +1169,7 @@ const createGallery = async (req, res) => {
       message: error.message,
       stack: error.stack
     });
-    
+
     // Handle validation errors
     if (error.name === 'ValidationError') {
       const errors = Object.values(error.errors).map(err => err.message);
@@ -1127,19 +1195,19 @@ const getGallery = async (req, res) => {
     const { category, status, featured, search } = req.query;
 
     let query = {};
-    
+
     if (category) {
       query.category = category;
     }
-    
+
     if (status) {
       query.status = status;
     }
-    
+
     if (featured !== undefined) {
       query.featured = featured === 'true';
     }
-    
+
     if (search) {
       query.$text = { $search: search };
     }
@@ -1243,7 +1311,7 @@ const updateGallery = async (req, res) => {
         try {
           const isDataUrl = typeof img === 'string' && img.startsWith('data:');
           const isHttp = typeof img === 'string' && /^https?:\/\//.test(img);
-          
+
           if (isDataUrl) {
             const uploadRes = await cloudinary.uploader.upload(img, {
               folder: 'travel/gallery',
@@ -1258,7 +1326,7 @@ const updateGallery = async (req, res) => {
         }
       }
       updateData.images = imageUrls;
-      
+
       // Update main imageUrl to first image if available
       if (imageUrls.length > 0 && !updateData.imageUrl) {
         updateData.imageUrl = imageUrls[0];
@@ -1302,7 +1370,7 @@ const updateGallery = async (req, res) => {
 
   } catch (error) {
     console.error('Update gallery error:', error);
-    
+
     // Handle validation errors
     if (error.name === 'ValidationError') {
       const errors = Object.values(error.errors).map(err => err.message);
@@ -1353,7 +1421,7 @@ const deleteGallery = async (req, res) => {
 const getGalleryCategories = async (req, res) => {
   try {
     const categories = await Gallery.distinct('category');
-    
+
     res.status(200).json({
       success: true,
       data: categories
@@ -1378,26 +1446,27 @@ const createReview = async (req, res) => {
     const userId = req.user._id;
 
     // Validate booking exists and belongs to user
-    const booking = await Booking.findOne({ 
-      _id: bookingId, 
-      user: userId, 
+    const booking = await Booking.findOne({
+      _id: bookingId,
+      user: userId,
       tour: tourId,
       paymentStatus: 'paid' // Only paid bookings can be reviewed
     });
 
     if (!booking) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Booking not found or you do not have permission to review this tour' 
+      return res.status(404).json({
+        success: false,
+        message: 'Booking not found or you do not have permission to review this tour'
       });
     }
 
     // Check if user already reviewed this tour
-    const existingReview = await Review.findOne({ tour: tourId, user: userId });
+    const existingReview = await Review.findOne({ booking: bookingId });
     if (existingReview) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'You have already reviewed this tour' 
+      console.log(existingReview)
+      return res.status(400).json({
+        success: false,
+        message: 'You have already reviewed this tour'
       });
     }
 
@@ -1416,10 +1485,10 @@ const createReview = async (req, res) => {
     // Populate user details
     await review.populate('user', 'username');
 
-    res.status(201).json({ 
-      success: true, 
-      message: 'Review created successfully', 
-      review 
+    res.status(201).json({
+      success: true,
+      message: 'Review created successfully',
+      review
     });
   } catch (error) {
     console.error('Create review error:', error);
@@ -1460,8 +1529,8 @@ const getTourReviews = async (req, res) => {
       });
     }
 
-    res.status(200).json({ 
-      success: true, 
+    res.status(200).json({
+      success: true,
       reviews,
       stats: stats.length > 0 ? {
         avgRating: Math.round(stats[0].avgRating * 10) / 10,
@@ -1486,36 +1555,36 @@ const canUserReview = async (req, res) => {
     const userId = req.user._id;
 
     // Check if user has a paid booking for this tour
-    const booking = await Booking.findOne({ 
-      tour: tourId, 
+    const booking = await Booking.findOne({
+      _id: tourId,
       user: userId,
       paymentStatus: 'paid'
     });
 
     if (!booking) {
-      return res.status(200).json({ 
-        success: true, 
-        canReview: false, 
+      return res.status(200).json({
+        success: true,
+        canReview: false,
         reason: 'You need to book and complete this tour to leave a review',
         booking: null
       });
     }
 
     // Check if user already reviewed
-    const existingReview = await Review.findOne({ tour: tourId, user: userId });
+    const existingReview = await Review.findOne({ booking: booking._id });
     if (existingReview) {
-      return res.status(200).json({ 
-        success: true, 
-        canReview: false, 
+      return res.status(200).json({
+        success: true,
+        canReview: false,
         reason: 'You have already reviewed this tour',
         booking: booking._id,
         review: existingReview
       });
     }
 
-    res.status(200).json({ 
-      success: true, 
-      canReview: true, 
+    res.status(200).json({
+      success: true,
+      canReview: true,
       booking: booking._id
     });
   } catch (error) {
@@ -1543,10 +1612,10 @@ const updateReview = async (req, res) => {
     await review.save();
     await review.populate('user', 'username');
 
-    res.status(200).json({ 
-      success: true, 
-      message: 'Review updated successfully', 
-      review 
+    res.status(200).json({
+      success: true,
+      message: 'Review updated successfully',
+      review
     });
   } catch (error) {
     console.error('Update review error:', error);
@@ -1567,9 +1636,9 @@ const deleteReview = async (req, res) => {
 
     await review.remove();
 
-    res.status(200).json({ 
-      success: true, 
-      message: 'Review deleted successfully' 
+    res.status(200).json({
+      success: true,
+      message: 'Review deleted successfully'
     });
   } catch (error) {
     console.error('Delete review error:', error);
@@ -1602,8 +1671,8 @@ const getGalleryStats = async (req, res) => {
       }
     ]);
 
-    const averageRating = reviewStats.length > 0 
-      ? Math.round(reviewStats[0].avgRating * 10) / 10 
+    const averageRating = reviewStats.length > 0
+      ? Math.round(reviewStats[0].avgRating * 10) / 10
       : 0;
 
     res.status(200).json({
@@ -1628,6 +1697,7 @@ module.exports = {
   getProfile,
   uploadImage,
   compressImageEndpoint,
+  compressAndUploadToS3,
   createBlog,
   getBlogs,
   getBlog,
@@ -1676,7 +1746,7 @@ const sendContactEmail = async (req, res) => {
         ${phone ? `<p><strong>Phone:</strong> ${phone}</p>` : ''}
         ${country ? `<p><strong>Country:</strong> ${country}</p>` : ''}
         ${heardFrom ? `<p><strong>Heard From:</strong> ${heardFrom}</p>` : ''}
-        ${message ? `<p><strong>Message:</strong><br/>${(message + '').replace(/\n/g,'<br/>')}</p>` : ''}
+        ${message ? `<p><strong>Message:</strong><br/>${(message + '').replace(/\n/g, '<br/>')}</p>` : ''}
         <hr/>
         <p style="font-size:12px;color:#666">Travel Beyond Tours contact form</p>
       </div>
@@ -1721,7 +1791,7 @@ const createTour = async (req, res) => {
           const img = body.images[i];
           const isDataUrl = typeof img === 'string' && img.startsWith('data:');
           const isHttp = typeof img === 'string' && /^https?:\/\//.test(img);
-          
+
           if (isDataUrl) {
             console.log(`📸 Compressing tour image ${i + 1}/${body.images.length}...`);
             // Compress image before upload
@@ -1794,11 +1864,15 @@ const createTour = async (req, res) => {
 
     const tour = new Tour({
       title: body.title,
+      title_es: body.title_es,
       description: body.description,
+      description_es: body.description_es,
       price: body.price,
       duration: body.duration,
       location: body.location,
+      location_es: body.location_es,
       category: body.category,
+      category_es: body.category_es,
       rating: body.rating || 0,
       image: singleImageUrl,
       images: imageUrls,
@@ -1807,9 +1881,13 @@ const createTour = async (req, res) => {
       maxParticipants: body.maxParticipants || 10,
       difficulty: body.difficulty || 'easy',
       highlights: body.highlights || [],
+      highlights_es: body.highlights_es || [],
       included: body.included || [],
+      included_es: body.included_es || [],
       notIncluded: body.notIncluded || [],
-      itinerary: body.itinerary || []
+      notIncluded_es: body.notIncluded_es || [],
+      itinerary: body.itinerary || [],
+      itinerary_es: body.itinerary_es || []
     });
 
     await tour.save();
@@ -1937,10 +2015,10 @@ const createBooking = async (req, res) => {
     // Populate tour details
     await booking.populate('tour');
 
-    res.status(201).json({ 
-      success: true, 
-      message: 'Booking created successfully', 
-      booking 
+    res.status(201).json({
+      success: true,
+      message: 'Booking created successfully',
+      booking
     });
   } catch (error) {
     console.error('Create booking error:', error);
@@ -2013,8 +2091,8 @@ const createPaymentIntent = async (req, res) => {
     booking.paymentIntentId = paymentIntent.id;
     await booking.save();
 
-    res.status(200).json({ 
-      success: true, 
+    res.status(200).json({
+      success: true,
       clientSecret: paymentIntent.client_secret,
       paymentIntentId: paymentIntent.id
     });
@@ -2037,17 +2115,17 @@ const updatePaymentStatus = async (req, res) => {
 
     booking.paymentStatus = paymentStatus;
     booking.paymentMethod = paymentMethod;
-    
+
     if (paymentStatus === 'paid') {
       booking.status = 'confirmed';
     }
 
     await booking.save();
 
-    res.status(200).json({ 
-      success: true, 
-      message: 'Payment status updated', 
-      booking 
+    res.status(200).json({
+      success: true,
+      message: 'Payment status updated',
+      booking
     });
   } catch (error) {
     console.error('Update payment status error:', error);
@@ -2067,9 +2145,9 @@ const cancelBooking = async (req, res) => {
     }
 
     if (booking.paymentStatus === 'paid') {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Cannot cancel paid booking. Please contact support for refund.' 
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot cancel paid booking. Please contact support for refund.'
       });
     }
 

@@ -7,6 +7,13 @@ const userSchema = new mongoose.Schema({
     trim: true,
     maxlength: 50
   },
+  // Spanish localized username (optional)
+  username_es: {
+    type: String,
+    required: false,
+    trim: true,
+    maxlength: 50
+  },
   email: {
     type: String,
     required: true,
