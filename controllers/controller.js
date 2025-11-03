@@ -593,7 +593,8 @@ const createBlog = async (req, res) => {
 // Get all blogs
 const getBlogs = async (req, res) => {
   try {
-    const { status, category, search } = req.query;
+    const { status, category, search, lang = 'en' } = req.query;
+    console.log('🔍 getBlogs called with lang:', lang);
 
     let query = {};
 
@@ -611,14 +612,65 @@ const getBlogs = async (req, res) => {
 
     const blogs = await Blog.find(query)
       .sort({ createdAt: -1 })
-      .select('-content'); // Exclude full content for list view
+      .lean(); // Use lean() to get plain objects
 
-    const total = blogs.length;
+    // Transform blogs to use language-specific fields
+    const transformedBlogs = blogs.map(blog => {
+      const blogObj = { ...blog };
+      
+      // If Spanish is requested and Spanish fields exist, use them
+      if (lang === 'es') {
+        console.log(`🇪🇸 Processing blog ${blogObj._id} for Spanish`);
+        
+        if (blogObj.title_es && blogObj.title_es.trim() !== '') {
+          console.log(`  ✓ Using Spanish title: ${blogObj.title_es}`);
+          blogObj.title = blogObj.title_es;
+        }
+        
+        if (blogObj.content_es && blogObj.content_es.trim() !== '') {
+          blogObj.content = blogObj.content_es;
+        }
+        
+        if (blogObj.excerpt_es && blogObj.excerpt_es.trim() !== '') {
+          blogObj.excerpt = blogObj.excerpt_es;
+        }
+        
+        if (blogObj.author_es && blogObj.author_es.trim() !== '') {
+          blogObj.author = blogObj.author_es;
+        }
+        
+        if (blogObj.tags_es && Array.isArray(blogObj.tags_es) && blogObj.tags_es.length > 0) {
+          blogObj.tags = blogObj.tags_es;
+        }
+        
+        if (blogObj.slug_es && blogObj.slug_es.trim() !== '') {
+          blogObj.slug = blogObj.slug_es;
+        }
+      }
+      
+      // Remove language-specific fields from response to keep it clean
+      delete blogObj.title_es;
+      delete blogObj.content_es;
+      delete blogObj.excerpt_es;
+      delete blogObj.author_es;
+      delete blogObj.tags_es;
+      delete blogObj.slug_es;
+      
+      // For list view, exclude full content unless explicitly requested
+      if (!req.query.includeContent) {
+        delete blogObj.content;
+      }
+      
+      return blogObj;
+    });
+
+    const total = transformedBlogs.length;
+    console.log(`✅ Returning ${total} transformed blogs for language: ${lang}`);
 
     res.status(200).json({
       success: true,
       data: {
-        blogs,
+        blogs: transformedBlogs,
         total
       }
     });
@@ -637,8 +689,10 @@ const getBlogs = async (req, res) => {
 const getBlog = async (req, res) => {
   try {
     const { id } = req.params;
+    const { lang = 'en' } = req.query;
+    console.log('🔍 getBlog called with lang:', lang);
 
-    const blog = await Blog.findById(id);
+    const blog = await Blog.findById(id).lean();
     if (!blog) {
       return res.status(404).json({
         success: false,
@@ -646,13 +700,54 @@ const getBlog = async (req, res) => {
       });
     }
 
-    // Increment view count
-    blog.viewCount += 1;
-    await blog.save();
+    const blogObj = { ...blog };
+    
+    // If Spanish is requested and Spanish fields exist, use them
+    if (lang === 'es') {
+      console.log(`🇪🇸 Processing single blog ${blogObj._id} for Spanish`);
+      console.log(`  Raw data - title: "${blogObj.title}", title_es: "${blogObj.title_es}"`);
+      
+      if (blogObj.title_es && blogObj.title_es.trim() !== '') {
+        console.log(`  ✓ Using Spanish title: ${blogObj.title_es}`);
+        blogObj.title = blogObj.title_es;
+      }
+      
+      if (blogObj.content_es && blogObj.content_es.trim() !== '') {
+        blogObj.content = blogObj.content_es;
+      }
+      
+      if (blogObj.excerpt_es && blogObj.excerpt_es.trim() !== '') {
+        blogObj.excerpt = blogObj.excerpt_es;
+      }
+      
+      if (blogObj.author_es && blogObj.author_es.trim() !== '') {
+        blogObj.author = blogObj.author_es;
+      }
+      
+      if (blogObj.tags_es && Array.isArray(blogObj.tags_es) && blogObj.tags_es.length > 0) {
+        blogObj.tags = blogObj.tags_es;
+      }
+      
+      if (blogObj.slug_es && blogObj.slug_es.trim() !== '') {
+        blogObj.slug = blogObj.slug_es;
+      }
+    }
+    
+    // Remove language-specific fields from response to keep it clean
+    delete blogObj.title_es;
+    delete blogObj.content_es;
+    delete blogObj.excerpt_es;
+    delete blogObj.author_es;
+    delete blogObj.tags_es;
+    delete blogObj.slug_es;
 
+    // Increment view count (need to update in database)
+    await Blog.findByIdAndUpdate(id, { $inc: { viewCount: 1 } });
+
+    console.log(`✅ Returning transformed blog for language: ${lang}`);
     res.status(200).json({
       success: true,
-      data: blog
+      data: blogObj
     });
 
   } catch (error) {
@@ -1904,7 +1999,8 @@ const createTour = async (req, res) => {
 
 const getTours = async (req, res) => {
   try {
-    const { status, category, search, featured } = req.query;
+    const { status, category, search, featured, lang = 'en' } = req.query;
+    console.log('🔍 getTours called with lang:', lang);
     const query = {};
     if (status) query.status = status;
     if (category) query.category = category;
@@ -1913,9 +2009,76 @@ const getTours = async (req, res) => {
       query.featured = String(featured).toLowerCase() === 'true';
     }
 
-    const tours = await Tour.find(query).sort({ createdAt: -1 });
-    const total = tours.length;
-    res.json({ success: true, data: { tours, total } });
+    const tours = await Tour.find(query).lean().sort({ createdAt: -1 });
+    console.log(`📦 Found ${tours.length} tours, language requested: ${lang}`);
+    
+    // Transform tours to use language-specific fields
+    const transformedTours = tours.map(tour => {
+      const tourObj = { ...tour }; // Use spread to ensure we have all fields
+      
+      // If Spanish is requested and Spanish fields exist, use them
+      if (lang === 'es') {
+        console.log(`🇪🇸 Processing tour ${tourObj._id} for Spanish`);
+        console.log(`  Raw data - title: "${tourObj.title}", title_es: "${tourObj.title_es}"`);
+        
+        // Check if Spanish fields exist and are not empty/null/undefined
+        if (tourObj.title_es && tourObj.title_es.trim() !== '') {
+          console.log(`  ✓ Using Spanish title: ${tourObj.title_es}`);
+          tourObj.title = tourObj.title_es;
+        } else {
+          console.log(`  ⚠ No Spanish title found, keeping English: ${tourObj.title}`);
+        }
+        
+        if (tourObj.description_es && tourObj.description_es.trim() !== '') {
+          console.log(`  ✓ Using Spanish description`);
+          tourObj.description = tourObj.description_es;
+        }
+        
+        if (tourObj.location_es && tourObj.location_es.trim() !== '') {
+          tourObj.location = tourObj.location_es;
+        }
+        
+        if (tourObj.category_es && tourObj.category_es.trim() !== '') {
+          tourObj.category = tourObj.category_es;
+        }
+        
+        if (tourObj.highlights_es && Array.isArray(tourObj.highlights_es) && tourObj.highlights_es.length > 0) {
+          tourObj.highlights = tourObj.highlights_es;
+        }
+        
+        if (tourObj.included_es && Array.isArray(tourObj.included_es) && tourObj.included_es.length > 0) {
+          tourObj.included = tourObj.included_es;
+        }
+        
+        if (tourObj.notIncluded_es && Array.isArray(tourObj.notIncluded_es) && tourObj.notIncluded_es.length > 0) {
+          tourObj.notIncluded = tourObj.notIncluded_es;
+        }
+        
+        if (tourObj.itinerary_es && Array.isArray(tourObj.itinerary_es) && tourObj.itinerary_es.length > 0) {
+          tourObj.itinerary = tourObj.itinerary_es.map(day => ({
+            title: (day.title_es && day.title_es.trim() !== '') ? day.title_es : (day.title || ''),
+            description: (day.description_es && day.description_es.trim() !== '') ? day.description_es : (day.description || ''),
+            points: (day.points_es && Array.isArray(day.points_es) && day.points_es.length > 0) ? day.points_es : (day.points || [])
+          }));
+        }
+      }
+      
+      // Remove language-specific fields from response to keep it clean
+      delete tourObj.title_es;
+      delete tourObj.description_es;
+      delete tourObj.location_es;
+      delete tourObj.category_es;
+      delete tourObj.highlights_es;
+      delete tourObj.included_es;
+      delete tourObj.notIncluded_es;
+      delete tourObj.itinerary_es;
+      
+      return tourObj;
+    });
+    
+    const total = transformedTours.length;
+    console.log(`✅ Returning ${total} transformed tours for language: ${lang}`);
+    res.json({ success: true, data: { tours: transformedTours, total } });
   } catch (error) {
     console.error('Get tours error:', error);
     res.status(500).json({ success: false, message: 'Internal server error', error: error.message });
@@ -1924,10 +2087,68 @@ const getTours = async (req, res) => {
 
 const getTour = async (req, res) => {
   try {
-    const tour = await Tour.findById(req.params.id);
+    const { lang = 'en' } = req.query;
+    console.log('🔍 getTour called with lang:', lang);
+    const tour = await Tour.findById(req.params.id).lean();
     if (!tour) return res.status(404).json({ success: false, message: 'Tour not found' });
-    console.log(tour)
-    res.json({ success: true, data: tour });
+    
+    const tourObj = { ...tour };
+    
+    // If Spanish is requested and Spanish fields exist, use them
+    if (lang === 'es') {
+      console.log(`🇪🇸 Processing single tour ${tourObj._id} for Spanish`);
+      console.log(`  Raw data - title: "${tourObj.title}", title_es: "${tourObj.title_es}"`);
+      
+      if (tourObj.title_es && tourObj.title_es.trim() !== '') {
+        console.log(`  ✓ Using Spanish title: ${tourObj.title_es}`);
+        tourObj.title = tourObj.title_es;
+      }
+      
+      if (tourObj.description_es && tourObj.description_es.trim() !== '') {
+        tourObj.description = tourObj.description_es;
+      }
+      
+      if (tourObj.location_es && tourObj.location_es.trim() !== '') {
+        tourObj.location = tourObj.location_es;
+      }
+      
+      if (tourObj.category_es && tourObj.category_es.trim() !== '') {
+        tourObj.category = tourObj.category_es;
+      }
+      
+      if (tourObj.highlights_es && Array.isArray(tourObj.highlights_es) && tourObj.highlights_es.length > 0) {
+        tourObj.highlights = tourObj.highlights_es;
+      }
+      
+      if (tourObj.included_es && Array.isArray(tourObj.included_es) && tourObj.included_es.length > 0) {
+        tourObj.included = tourObj.included_es;
+      }
+      
+      if (tourObj.notIncluded_es && Array.isArray(tourObj.notIncluded_es) && tourObj.notIncluded_es.length > 0) {
+        tourObj.notIncluded = tourObj.notIncluded_es;
+      }
+      
+      if (tourObj.itinerary_es && Array.isArray(tourObj.itinerary_es) && tourObj.itinerary_es.length > 0) {
+        tourObj.itinerary = tourObj.itinerary_es.map(day => ({
+          title: (day.title_es && day.title_es.trim() !== '') ? day.title_es : (day.title || ''),
+          description: (day.description_es && day.description_es.trim() !== '') ? day.description_es : (day.description || ''),
+          points: (day.points_es && Array.isArray(day.points_es) && day.points_es.length > 0) ? day.points_es : (day.points || [])
+        }));
+      }
+    }
+    
+    // Remove language-specific fields from response to keep it clean
+    delete tourObj.title_es;
+    delete tourObj.description_es;
+    delete tourObj.location_es;
+    delete tourObj.category_es;
+    delete tourObj.highlights_es;
+    delete tourObj.included_es;
+    delete tourObj.notIncluded_es;
+    delete tourObj.itinerary_es;
+    
+    console.log(tourObj);
+    res.json({ success: true, data: tourObj });
   } catch (error) {
     console.error('Get tour error:', error);
     res.status(500).json({ success: false, message: 'Internal server error', error: error.message });
